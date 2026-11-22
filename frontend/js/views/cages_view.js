@@ -2,6 +2,7 @@ export const cagesViewTemplate = `
 <section class="panel">
   <h2>入笼冻结</h2>
   <p class="hint">从当事人可用保证金划入新笼，写入笼代。冻结后须履约核验，才能解笼或罚没。</p>
+  <p class="hint">同账户并发入笼走账户锁内整笔入笼：同一时刻只许一只笼建成，后到者拿不到锁即整笔拒写，正式笼表零增、只留锁失败痕（见下方争用痕与审计争用页）。</p>
   <div class="grid-2">
     <div>
       <div class="form-row">
@@ -33,6 +34,21 @@ export const cagesViewTemplate = `
         <button @click="freezeCage">入笼冻结</button>
         <button class="secondary" @click="refresh">刷新</button>
       </div>
+      <h3 style="margin-top:14px">入笼锁失败痕（账户锁争用）</h3>
+      <p class="hint">后到会话被 409 拒写时在此与审计争用页同源可见，业务表零增。</p>
+      <table>
+        <thead><tr><th>时间</th><th>锁键</th><th>柜员</th><th>动作</th><th>详情</th></tr></thead>
+        <tbody>
+          <tr v-for="c in freezeContention" :key="c.id">
+            <td>{{ c.created_at }}</td>
+            <td>{{ c.lock_key }}</td>
+            <td>{{ c.actor }}</td>
+            <td><span class="badge fail">{{ c.action }}</span></td>
+            <td>{{ c.detail }}</td>
+          </tr>
+          <tr v-if="!freezeContention.length"><td colspan="5" class="hint">暂无入笼锁失败痕</td></tr>
+        </tbody>
+      </table>
     </div>
     <div>
       <div class="cage-cards">

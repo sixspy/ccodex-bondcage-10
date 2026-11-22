@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
-from locks import release, require_lock
+from locks import release, try_acquire
 from models import TopupIn
 
 router = APIRouter(tags=["topup"])
@@ -34,8 +34,10 @@ def topup_stub(body: TopupIn, authorization: AuthHeader = None):
         raise HTTPException(400, "mode 须为同笼扩代或新笼桥接")
     lock_key = f"cage:{body.cage_id}"
     with connect() as conn:
-        require_lock(conn, lock_key, user)
-        try:
+        if not try_acquire(conn, lock_key, user):
+            raise HTTPException(409, "争用：笼锁被占用，后到只记争用，不写业务")
+    try:
+        with connect() as conn:
             cage = conn.execute(
                 "SELECT * FROM cages WHERE id=?", (body.cage_id,)
             ).fetchone()
@@ -83,6 +85,6 @@ def topup_stub(body: TopupIn, authorization: AuthHeader = None):
                 "cage_unchanged": True,
                 "mode": body.mode,
             }
-        finally:
+    finally:
+        with connect() as conn:
             release(conn, lock_key, user)
-            conn.commit()

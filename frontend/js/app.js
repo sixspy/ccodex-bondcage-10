@@ -131,6 +131,10 @@ createApp({
     const frozenCages = computed(() =>
       cages.value.filter((c) => c.status === "已冻结")
     );
+    // 入笼页锁失败痕：与审计争用页同一份 contention 数据，按账户锁键派生
+    const freezeContention = computed(() =>
+      contention.value.filter((c) => String(c.lock_key).startsWith("bond:"))
+    );
     const passCages = computed(() =>
       cages.value.filter(
         (c) => c.status === "核验通过" || c.status === "部分解笼"
@@ -426,6 +430,7 @@ createApp({
       topupForm,
       splitForm,
       frozenCages,
+      freezeContention,
       passCages,
       failCages,
       login,

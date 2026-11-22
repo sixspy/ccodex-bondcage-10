@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
-from locks import release, require_lock
+from locks import release, try_acquire
 from models import BondOpenIn, DepositIn
 
 router = APIRouter(tags=["bonds"])
@@ -50,9 +50,12 @@ def get_bond(party_key: str, authorization: AuthHeader = None):
 def open_bond(body: BondOpenIn, authorization: AuthHeader = None):
     user = require_writer(authorization)
     lock_key = f"bond:{body.party_key}"
+    # 取账户锁独立提交；拿不到只记争用痕，业务表零增
     with connect() as conn:
-        require_lock(conn, lock_key, user)
-        try:
+        if not try_acquire(conn, lock_key, user):
+            raise HTTPException(409, "争用：账户锁被占用，后到只记锁失败痕，不写业务")
+    try:
+        with connect() as conn:
             exists = conn.execute(
                 "SELECT id FROM bond_accounts WHERE party_key=?",
                 (body.party_key,),
@@ -85,18 +88,21 @@ def open_bond(body: BondOpenIn, authorization: AuthHeader = None):
                 (body.party_key,),
             ).fetchone()
             return dict(row)
-        finally:
+    finally:
+        with connect() as conn:
             release(conn, lock_key, user)
-            conn.commit()
 
 
 @router.post("/api/bonds/deposit")
 def deposit(body: DepositIn, authorization: AuthHeader = None):
     user = require_writer(authorization)
     lock_key = f"bond:{body.party_key}"
+    # 取账户锁独立提交；拿不到只记争用痕，业务表零增
     with connect() as conn:
-        require_lock(conn, lock_key, user)
-        try:
+        if not try_acquire(conn, lock_key, user):
+            raise HTTPException(409, "争用：账户锁被占用，后到只记锁失败痕，不写业务")
+    try:
+        with connect() as conn:
             acct = conn.execute(
                 "SELECT * FROM bond_accounts WHERE party_key=?",
                 (body.party_key,),
@@ -129,6 +135,6 @@ def deposit(body: DepositIn, authorization: AuthHeader = None):
                 (body.party_key,),
             ).fetchone()
             return dict(row)
-        finally:
+    finally:
+        with connect() as conn:
             release(conn, lock_key, user)
-            conn.commit()

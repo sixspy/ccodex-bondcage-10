@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
-from locks import release, require_lock
+from locks import release, try_acquire
 from models import ForfeitIn
 
 router = APIRouter(tags=["forfeit"])
@@ -29,8 +29,10 @@ def do_forfeit(body: ForfeitIn, authorization: AuthHeader = None):
     user = require_writer(authorization)
     lock_key = f"cage:{body.cage_id}"
     with connect() as conn:
-        require_lock(conn, lock_key, user)
-        try:
+        if not try_acquire(conn, lock_key, user):
+            raise HTTPException(409, "争用：笼锁被占用，后到只记争用，不写业务")
+    try:
+        with connect() as conn:
             cage = conn.execute(
                 "SELECT * FROM cages WHERE id=?", (body.cage_id,)
             ).fetchone()
@@ -55,15 +57,6 @@ def do_forfeit(body: ForfeitIn, authorization: AuthHeader = None):
             now = now_iso()
             gen = int(cage["generation"])
             ref = f"FOR-{cage['cage_code']}-g{gen}"
-            # 同笼同代禁止重复罚没整额撞车
-            existing = conn.execute(
-                """SELECT id FROM forfeits
-                   WHERE cage_id=? AND cage_generation=? AND status='已罚没'""",
-                (body.cage_id, gen),
-            ).fetchone()
-            if existing and amount >= avail - 1e-9:
-                # 允许部分罚没后的尾款，但禁止整额重复
-                pass
             cur = conn.execute(
                 """INSERT INTO forfeits(cage_id,amount,reason,cage_generation,status,forfeit_ref,created_at)
                    VALUES (?,?,?,?,?,?,?)""",
@@ -107,6 +100,6 @@ def do_forfeit(body: ForfeitIn, authorization: AuthHeader = None):
                 "SELECT * FROM forfeits WHERE id=?", (cur.lastrowid,)
             ).fetchone()
             return dict(row)
-        finally:
+    finally:
+        with connect() as conn:
             release(conn, lock_key, user)
-            conn.commit()
